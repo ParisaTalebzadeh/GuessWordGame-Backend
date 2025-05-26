@@ -207,6 +207,12 @@ class GuessAPIView(APIView):
             elif user == game.player2:
                 game.player2_score += 20
         else:
+            pos_key = str(position)
+            wrong = game.wrong_guesses or {}
+            wrong.setdefault(pos_key, [])
+            if letter not in wrong[pos_key]:
+                wrong[pos_key].append(letter)
+            game.wrong_guesses = wrong
             # کاهش امتیاز بازیکن به میزان -10 (امکان منفی شدن امتیاز)
             if user == game.player1:
                 game.player1_score -= 10
@@ -234,6 +240,67 @@ class GuessAPIView(APIView):
 
         return Response({
             'is_correct': is_correct,
+            'masked_word': game.masked_word,
+            'score_player1': game.player1_score,
+            'score_player2': game.player2_score,
+            'next_turn': game.current_turn.username if game.current_turn else None,
+            'game_status': game.status,
+            'winner': game.winner.username if game.winner else None,
+        }, status=status.HTTP_200_OK)
+class GuessFullWordAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, game_id):
+        user = request.user
+        guessed_word = request.data.get('word', '').strip().upper()
+
+        if not guessed_word:
+            return Response({'detail': 'You must provide a word.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        game = get_object_or_404(Game, id=game_id)
+
+        if game.status != 'in_progress':
+            return Response({'detail': 'Game is not active.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if game.current_turn != user:
+            return Response({'detail': 'Not your turn!'}, status=status.HTTP_403_FORBIDDEN)
+
+        actual_word = game.word.text.upper()
+
+        # کسر 30 امتیاز برای استفاده از این قابلیت
+        if user == game.player1:
+            game.player1_score -= 30
+        elif user == game.player2:
+            game.player2_score -= 30
+
+        if guessed_word == actual_word:
+            # حدس درست - پایان بازی و +100 امتیاز
+            if user == game.player1:
+                game.player1_score += 100
+            elif user == game.player2:
+                game.player2_score += 100
+
+            game.masked_word = actual_word
+            game.status = 'finished'
+
+            # تعیین برنده
+            if game.player1_score > game.player2_score:
+                game.winner = game.player1
+            elif game.player2_score > game.player1_score:
+                game.winner = game.player2
+            else:
+                game.winner = None  # مساوی
+        else:
+            # حدس اشتباه، فقط نوبت تغییر می‌کند
+            if user == game.player1:
+                game.current_turn = game.player2
+            else:
+                game.current_turn = game.player1
+
+        game.save()
+
+        return Response({
+            'is_correct': guessed_word == actual_word,
             'masked_word': game.masked_word,
             'score_player1': game.player1_score,
             'score_player2': game.player2_score,

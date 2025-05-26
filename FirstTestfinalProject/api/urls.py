@@ -2,8 +2,8 @@ from django.http import JsonResponse
 from django.urls import path
 from rest_framework.authtoken.views import obtain_auth_token
 
-from api.views import RegisterAPIView, CreateGameAPIView,JoinGameAPIView, WaitingGamesListAPIView,GuessAPIView,PauseGameAPIView,ResumeGameAPIView
-
+from api.views import RegisterAPIView, CreateGameAPIView, JoinGameAPIView, WaitingGamesListAPIView, GuessAPIView, \
+    PauseGameAPIView, ResumeGameAPIView, GuessFullWordAPIView
 
 urlpatterns = [
     path('login/', obtain_auth_token),
@@ -14,6 +14,7 @@ urlpatterns = [
     path('games/<int:game_id>/pause/', PauseGameAPIView.as_view(), name='pause-game'),
     path('games/<int:game_id>/resume/', ResumeGameAPIView.as_view(), name='resume-game'),
     path('games/<int:game_id>/guess/', GuessAPIView.as_view(), name='guess-letter'),
+    path('games/<int:game_id>/guess-full-word/', GuessFullWordAPIView.as_view(), name='guess-full-word'),
 
 ]
 

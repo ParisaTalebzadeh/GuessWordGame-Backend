@@ -38,7 +38,7 @@ class Game(models.Model):
     ]
 
     STATUS_CHOICES = [
-        ('waiting', 'Waiting for second player'),
+        ('waiting', 'Waiting'),
         ('in_progress', 'In Progress'),
         ('finished', 'Finished'),
         ('paused','Paused')
@@ -46,8 +46,8 @@ class Game(models.Model):
 
     player1 = models.ForeignKey(User, on_delete=models.CASCADE, related_name='games_created')
     player2 = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='games_joined')
-    player1_score = models.PositiveIntegerField(default=0)
-    player2_score = models.PositiveIntegerField(default=0)
+    player1_score = models.IntegerField(default=0)
+    player2_score = models.IntegerField(default=0)
 
     word = models.ForeignKey(Word, on_delete=models.CASCADE, related_name='word_games')
     difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES)
@@ -65,7 +65,7 @@ class Game(models.Model):
 
     # نمایش وضعیت کلمه: مثلاً _ _ A _ E
     masked_word = models.CharField(max_length=100, default="")
-
+    wrong_guesses = models.JSONField(default=dict)
     def __str__(self):
         return f"Game #{self.id} - {self.get_difficulty_display()}"
 
