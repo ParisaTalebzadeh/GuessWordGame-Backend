@@ -1,71 +1,85 @@
 from django.contrib.auth.models import User
+from django.db.models import Q
 from rest_framework import serializers
-from rest_framework.exceptions import ValidationError
 
-from django.contrib.auth.models import User
-from rest_framework import serializers
-from rest_framework.exceptions import ValidationError
+from main.models import Game, ScoreHistory, PlayerProfile
 
-from main.models import Game
-
-
-class UserSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(required=False)
-    email = serializers.EmailField(required=False)
-    password = serializers.CharField(write_only=True, min_length=4)
-
-    class Meta:
-        model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'password']
-
-    def validate(self, data):
-        username = data.get('username')
-        email = data.get('email')
-
-        if not username and not email:
-            raise ValidationError("Either username or email must be provided.")
-
-        if username and User.objects.filter(username=username).exists():
-            raise ValidationError("This username has already been used.")
-        if email and User.objects.filter(email=email).exists():
-            raise ValidationError("This email has already been used.")
-
-        return data
-
-    def create(self, validated_data):
-        username = validated_data.get('username')
-        email = validated_data.get('email')
-
-        if not username:
-            # استخراج بخش قبل از @ از ایمیل
-            username = email.split('@')[0]
-            # اگر این username هم وجود داشت، یکی اضافه کنیم (مثل username_1)
-            original_username = username
-            counter = 1
-            while User.objects.filter(username=username).exists():
-                username = f"{original_username}_{counter}"
-                counter += 1
-
-        user = User.objects.create_user(
-            username=username,
-            password=validated_data['password'],
-            email=email,
-            first_name=validated_data.get('first_name', ''),
-            last_name=validated_data.get('last_name', '')
-        )
-        return user
-
-
-# serializers.py
 
 class GameDifficultySerializer(serializers.Serializer):
     difficulty = serializers.ChoiceField(choices=Game.DIFFICULTY_CHOICES)
 
 
 class GameSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Game
-        fields = ['id', 'player1', 'player2', 'difficulty', 'status', 'word', 'masked_word', 'guessed_letters',
-                  'current_turn', 'winner', 'created_at', ]
-        # fields = ['id', 'difficulty']
+        fields = [
+            'id', 'player1', 'player2', 'difficulty', 'status',
+            'word', 'masked_word', 'guessed_letters',
+            'current_turn', 'winner', 'created_at',
+        ]
+
+
+class ScoreHistorySerializer(serializers.ModelSerializer):
+    result = serializers.SerializerMethodField()
+    opponent_name = serializers.SerializerMethodField()
+    word = serializers.CharField(source='game.word')
+    difficulty = serializers.CharField(source='game.difficulty')
+
+    class Meta:
+        model = ScoreHistory
+        fields = ['score', 'result', 'opponent_name', 'word', 'difficulty', 'date']
+
+    def get_result(self, obj):
+        # نتیجه برد یا باخت بسته به اینکه کاربر برابر با برنده بازی است یا خیر
+        if obj.game.winner == obj.user:
+            return 'برد'
+        return 'باخت'
+
+    def get_opponent_name(self, obj):
+        # نام حریف بازی (به عنوان مثال اگر مدل بازی دو فیلد player1 و player2 داشته باشد)
+        if obj.game.player1 == obj.user:
+            return obj.game.player2.username
+        return obj.game.player1.username
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    total_score = serializers.IntegerField(source='profile.total_score')
+    games = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'total_score', 'games']
+
+    def get_games(self, obj):
+        # فیلتر بازی‌های تمام‌شده کاربر
+        finished_games = ScoreHistory.objects.filter(user=obj, game__status='finished')
+        return ScoreHistorySerializer(finished_games, many=True).data
+
+
+class LeaderboardSerializer(serializers.ModelSerializer):
+    score = serializers.IntegerField(source='profile.total_score', read_only=True)
+    rank = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'score', 'rank']
+        read_only_fields = fields
+
+
+    def get_rank(self, obj):
+        """
+        محاسبهٔ رتبه بر اساس total_score (نزولی).
+        برای هر User، ابتدا لیستی از همهٔ PlayerProfileها را می‌گیریم،
+        به ترتیب نزولی روی total_score مرتب می‌کنیم، سپس
+        idxِ user.id را پیدا می‌کنیم و +1 می‌کنیم.
+        """
+        # لیست user_idها را بر اساس total_score نزولی می‌گیریم
+        ordered_ids = list(
+            PlayerProfile.objects
+            .order_by('-total_score')
+            .values_list('user_id', flat=True)
+        )
+        try:
+            return ordered_ids.index(obj.id) + 1
+        except ValueError:
+            # اگر کاربری در PlayerProfile نباشد (نباید پیش بیاید)
+            return None

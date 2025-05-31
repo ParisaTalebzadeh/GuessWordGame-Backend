@@ -1,37 +1,63 @@
 import random
-
-from django.http import JsonResponse
+from django.contrib.auth.models import User
+from django.db.models import Q
 from rest_framework.generics import get_object_or_404, ListAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from django.contrib.auth.models import User
+from tutorial.quickstart.serializers import UserSerializer
 
-from api.serializers import UserSerializer, GameSerializer, GameDifficultySerializer
-from main.models import Word, Game,Guess
+from api.serializers import GameSerializer, GameDifficultySerializer, UserProfileSerializer, ScoreHistorySerializer, \
+    LeaderboardSerializer
+from main.models import Word, Game, Guess, ScoreHistory, PlayerProfile
 
 
 
 class RegisterAPIView(APIView):
     def post(self, request):
-        serializer = UserSerializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.save()
+        username = request.data.get('username')
+        password = request.data.get('password')
+
+        if not username or not password:
             return Response(
-                {
-                    'success': True,
-                    'user': {
-                        'id': user.id,
-                        'username': user.username,
-                        'first_name': user.first_name,
-                        'last_name': user.last_name,
-                    }
-                }, status=status.HTTP_201_CREATED
+                {'error': 'Username and password are required!'},
+                status=status.HTTP_400_BAD_REQUEST
             )
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        if User.objects.filter(username=username).exists():
+            return Response(
+                {'error': 'This username has already been taken!'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
+        user = User.objects.create_user(username=username, password=password)
+
+        return Response(
+            {
+                'success': True,
+                'user': {
+                    'id': user.id,
+                    'username': user.username,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                }
+            }, status=status.HTTP_201_CREATED
+        )
+
+class UserProfileAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = UserProfileSerializer(request.user)
+        return Response(serializer.data)
+class UserGameHistoryAPIView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ScoreHistorySerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        return ScoreHistory.objects.filter(user=user, game__status='finished')
 class CreateGameAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -97,21 +123,28 @@ class WaitingGamesListAPIView(ListAPIView):
     def get_queryset(self):
         user = self.request.user
 
-        # بازی‌هایی که در حالت waiting هستن و هنوز بازیکن دوم ندارن
-        waiting_games = Game.objects.filter(status='waiting', player2__isnull=True)
+        # ۱) بازی‌های تازه (waiting) که هنوز player2 ندارند
+        waiting_games = Game.objects.filter(
+            status='waiting',
+            player2__isnull=True
+        )
 
-        # بازی‌هایی که در حالت paused هستن و کاربر فعلی توش شرکت داشته
+        # ۲) بازی‌های pause شده که کاربر یکی از دو بازیکن باشد
         paused_games = Game.objects.filter(
             status='paused'
         ).filter(
-            player1=user
-        ) | Game.objects.filter(
-            status='paused',
-            player2=user
+            Q(player1=user) | Q(player2=user)
         )
 
-        # Union این دو queryset
-        return waiting_games.union(paused_games)
+        # ۳) بازی‌های in_progress که کاربر یکی از دو بازیکن باشد
+        in_progress_games = Game.objects.filter(
+            status='in_progress'
+        ).filter(
+            Q(player1=user) | Q(player2=user)
+        )
+
+        # ترکیب همه‌ی کوئری‌ها
+        return waiting_games.union(paused_games, in_progress_games)
 
 class PauseGameAPIView(APIView):
     permission_classes = [IsAuthenticated]
@@ -137,16 +170,18 @@ class ResumeGameAPIView(APIView):
     def post(self, request, game_id):
         game = get_object_or_404(Game, id=game_id)
 
-        if game.status != 'paused':
-            return Response({'error': 'Only paused games can be resumed.'}, status=400)
+        if game.status not in ['paused', 'in_progress']:
+            return Response({'error': 'Only paused or in-progress games can be resumed.'}, status=400)
 
         if request.user != game.player1 and request.user != game.player2:
             return Response({'error': 'You are not a player in this game.'}, status=403)
 
-        game.status = 'in_progress'
-        game.save()
+        if game.status == 'paused':
+            game.status = 'in_progress'
+            game.save()
 
-        return Response({'message': 'Game resumed successfully.'}, status=200)
+        serializer = GameSerializer(game)
+        return Response(serializer.data, status=200)
 
 
 class GuessAPIView(APIView):
@@ -155,7 +190,7 @@ class GuessAPIView(APIView):
     def post(self, request, game_id):
         user = request.user
         letter = request.data.get('letter')
-        position = request.data.get('position')  # position: یک عدد
+        position = request.data.get('position')
 
         if letter is None or position is None:
             return Response({'detail': 'Both "letter" and "position" are required.'},
@@ -168,7 +203,6 @@ class GuessAPIView(APIView):
 
         game = get_object_or_404(Game, id=game_id)
 
-        # بررسی وضعیت بازی
         if game.status != 'in_progress':
             return Response({'detail': 'Game is not active.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -178,33 +212,30 @@ class GuessAPIView(APIView):
         if position < 0 or position >= len(game.word.text):
             return Response({'detail': 'Invalid position.'}, status=status.HTTP_400_BAD_REQUEST)
 
-            # بررسی اینکه آیا موقعیت قبلاً حدس زده شده (حرف جایگزین شده)
         if game.masked_word[position] != '_':
             return Response({'detail': 'This position has already been guessed correctly.'},
                             status=status.HTTP_400_BAD_REQUEST)
 
         word = game.word.text
         masked = list(game.masked_word)
-        # اطمینان از اینکه masked دقیقا به اندازه طول کلمه است:
-        if len(masked) < len(word):
-            masked += ['_'] * (len(word) - len(masked))
-        elif len(masked) > len(word):
-            masked = masked[:len(word)]
+        # تنظیم طول masked
+        if len(masked) != len(word):
+            masked = ['_' if i >= len(masked)
+                      else masked[i] for i in range(len(word))]
 
         actual_letter = word[position]
-        is_correct = (letter == actual_letter)
+        is_correct = (letter == actual_letter)  # مقایسه بدون حساسیت به حروف بزرگ
 
-        # ثبت حدس در مدل Guess
+        # ذخیره حدس
         Guess.objects.create(game=game, player=user, letter=letter, is_correct=is_correct)
 
+        # امتیازدهی و آپدیت masked
         if is_correct:
-            masked[position] = letter
+            masked[position] = actual_letter
             game.masked_word = ''.join(masked)
-
-            # افزایش امتیاز بازیکن به میزان +20
             if user == game.player1:
                 game.player1_score += 20
-            elif user == game.player2:
+            else:
                 game.player2_score += 20
         else:
             pos_key = str(position)
@@ -213,24 +244,38 @@ class GuessAPIView(APIView):
             if letter not in wrong[pos_key]:
                 wrong[pos_key].append(letter)
             game.wrong_guesses = wrong
-            # کاهش امتیاز بازیکن به میزان -10 (امکان منفی شدن امتیاز)
             if user == game.player1:
                 game.player1_score -= 10
-            elif user == game.player2:
+            else:
                 game.player2_score -= 10
 
-        # بررسی پایان بازی
+        # بررسی اتمام بازی
         if '_' not in game.masked_word:
             game.status = 'finished'
-            # تعیین برنده
             if game.player1_score > game.player2_score:
                 game.winner = game.player1
             elif game.player2_score > game.player1_score:
                 game.winner = game.player2
             else:
-                game.winner = None  # مساوی
+                game.winner = None
+
+            # ثبت در ScoreHistory
+            for player, score in [(game.player1, game.player1_score), (game.player2, game.player2_score)]:
+                ScoreHistory.objects.get_or_create(
+                    user=player,
+                    game=game,
+                    defaults={'score': score, 'is_winner': (player == game.winner)}
+                )
+
+                # مجموع امتیاز را در PlayerProfile نیز به‌روزرسانی کن
+                try:
+                    profile = player.profile  # related_name='profile'
+                    profile.total_score += score
+                    profile.save()
+                except PlayerProfile.DoesNotExist:
+                    pass  # اگر پروفایل نداشت، نادیده بگیر
+
         else:
-            # نوبت بازیکن بعدی
             if user == game.player1:
                 game.current_turn = game.player2
             else:
@@ -247,6 +292,7 @@ class GuessAPIView(APIView):
             'game_status': game.status,
             'winner': game.winner.username if game.winner else None,
         }, status=status.HTTP_200_OK)
+
 class GuessFullWordAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -267,31 +313,44 @@ class GuessFullWordAPIView(APIView):
 
         actual_word = game.word.text.upper()
 
-        # کسر 30 امتیاز برای استفاده از این قابلیت
+        # کم کردن 30 امتیاز برای حدس کل کلمه
         if user == game.player1:
             game.player1_score -= 30
-        elif user == game.player2:
+        else:
             game.player2_score -= 30
 
+        # اگر حدس درست بود
         if guessed_word == actual_word:
-            # حدس درست - پایان بازی و +100 امتیاز
             if user == game.player1:
                 game.player1_score += 100
-            elif user == game.player2:
+            else:
                 game.player2_score += 100
 
             game.masked_word = actual_word
             game.status = 'finished'
-
-            # تعیین برنده
             if game.player1_score > game.player2_score:
                 game.winner = game.player1
             elif game.player2_score > game.player1_score:
                 game.winner = game.player2
             else:
                 game.winner = None  # مساوی
+
+            # ساختن ScoreHistory و آپدیت PlayerProfile
+            for player, score in [(game.player1, game.player1_score), (game.player2, game.player2_score)]:
+                ScoreHistory.objects.get_or_create(
+                    user=player,
+                    game=game,
+                    defaults={'score': score, 'is_winner': (player == game.winner)}
+                )
+                try:
+                    profile = player.profile
+                    profile.total_score += score
+                    profile.save()
+                except PlayerProfile.DoesNotExist:
+                    pass
+
         else:
-            # حدس اشتباه، فقط نوبت تغییر می‌کند
+            # حدس اشتباه: نوبت عوض شود
             if user == game.player1:
                 game.current_turn = game.player2
             else:
@@ -308,3 +367,12 @@ class GuessFullWordAPIView(APIView):
             'game_status': game.status,
             'winner': game.winner.username if game.winner else None,
         }, status=status.HTTP_200_OK)
+class LeaderboardAPIView(APIView):
+
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        top_ten_profiles = PlayerProfile.objects.order_by('-total_score')[:10]
+        top_ten_users = [profile.user for profile in top_ten_profiles]
+        serializer = LeaderboardSerializer(top_ten_users, many=True)
+        return Response(serializer.data)
+

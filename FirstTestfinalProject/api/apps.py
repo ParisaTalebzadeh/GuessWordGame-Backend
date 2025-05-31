@@ -7,3 +7,4 @@ class ApiConfig(AppConfig):
 
     def ready(self):
         from api import signal
+
