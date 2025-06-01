@@ -6,10 +6,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from tutorial.quickstart.serializers import UserSerializer
 
-from api.serializers import GameSerializer, GameDifficultySerializer, UserProfileSerializer, ScoreHistorySerializer, \
-    LeaderboardSerializer
+
+from api.serializers import GameSerializer,  UserProfileSerializer, ScoreHistorySerializer, \
+    LeaderboardSerializer, GameStatusSerializer, GameCreateSerializer
 from main.models import Word, Game, Guess, ScoreHistory, PlayerProfile
 
 
@@ -51,24 +51,18 @@ class UserProfileAPIView(APIView):
     def get(self, request):
         serializer = UserProfileSerializer(request.user)
         return Response(serializer.data)
-class UserGameHistoryAPIView(ListAPIView):
-    permission_classes = [IsAuthenticated]
-    serializer_class = ScoreHistorySerializer
 
-    def get_queryset(self):
-        user = self.request.user
-        return ScoreHistory.objects.filter(user=user, game__status='finished')
 class CreateGameAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        serializer = GameDifficultySerializer(data=request.data)
+        serializer = GameCreateSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         difficulty = serializer.validated_data['difficulty']
-
         words = Word.objects.filter(difficulty=difficulty)
+
         if not words.exists():
             return Response({'error': 'No words available for this difficulty.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -123,27 +117,22 @@ class WaitingGamesListAPIView(ListAPIView):
     def get_queryset(self):
         user = self.request.user
 
-        # ۱) بازی‌های تازه (waiting) که هنوز player2 ندارند
         waiting_games = Game.objects.filter(
             status='waiting',
             player2__isnull=True
         )
-
-        # ۲) بازی‌های pause شده که کاربر یکی از دو بازیکن باشد
         paused_games = Game.objects.filter(
             status='paused'
         ).filter(
             Q(player1=user) | Q(player2=user)
         )
 
-        # ۳) بازی‌های in_progress که کاربر یکی از دو بازیکن باشد
         in_progress_games = Game.objects.filter(
             status='in_progress'
         ).filter(
             Q(player1=user) | Q(player2=user)
         )
 
-        # ترکیب همه‌ی کوئری‌ها
         return waiting_games.union(paused_games, in_progress_games)
 
 class PauseGameAPIView(APIView):
@@ -224,12 +213,10 @@ class GuessAPIView(APIView):
                       else masked[i] for i in range(len(word))]
 
         actual_letter = word[position]
-        is_correct = (letter == actual_letter)  # مقایسه بدون حساسیت به حروف بزرگ
+        is_correct = (letter == actual_letter)
 
-        # ذخیره حدس
         Guess.objects.create(game=game, player=user, letter=letter, is_correct=is_correct)
 
-        # امتیازدهی و آپدیت masked
         if is_correct:
             masked[position] = actual_letter
             game.masked_word = ''.join(masked)
@@ -259,22 +246,6 @@ class GuessAPIView(APIView):
             else:
                 game.winner = None
 
-            # ثبت در ScoreHistory
-            for player, score in [(game.player1, game.player1_score), (game.player2, game.player2_score)]:
-                ScoreHistory.objects.get_or_create(
-                    user=player,
-                    game=game,
-                    defaults={'score': score, 'is_winner': (player == game.winner)}
-                )
-
-                # مجموع امتیاز را در PlayerProfile نیز به‌روزرسانی کن
-                try:
-                    profile = player.profile  # related_name='profile'
-                    profile.total_score += score
-                    profile.save()
-                except PlayerProfile.DoesNotExist:
-                    pass  # اگر پروفایل نداشت، نادیده بگیر
-
         else:
             if user == game.player1:
                 game.current_turn = game.player2
@@ -299,11 +270,10 @@ class GuessFullWordAPIView(APIView):
     def post(self, request, game_id):
         user = request.user
         guessed_word = request.data.get('word', '').strip().upper()
+        game = get_object_or_404(Game, id=game_id)
 
         if not guessed_word:
             return Response({'detail': 'You must provide a word.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        game = get_object_or_404(Game, id=game_id)
 
         if game.status != 'in_progress':
             return Response({'detail': 'Game is not active.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -313,14 +283,14 @@ class GuessFullWordAPIView(APIView):
 
         actual_word = game.word.text.upper()
 
-        # کم کردن 30 امتیاز برای حدس کل کلمه
+        # -30 penalty for guessing full word
         if user == game.player1:
             game.player1_score -= 30
         else:
             game.player2_score -= 30
 
-        # اگر حدس درست بود
         if guessed_word == actual_word:
+            # +100 reward for correct full guess
             if user == game.player1:
                 game.player1_score += 100
             else:
@@ -328,29 +298,8 @@ class GuessFullWordAPIView(APIView):
 
             game.masked_word = actual_word
             game.status = 'finished'
-            if game.player1_score > game.player2_score:
-                game.winner = game.player1
-            elif game.player2_score > game.player1_score:
-                game.winner = game.player2
-            else:
-                game.winner = None  # مساوی
-
-            # ساختن ScoreHistory و آپدیت PlayerProfile
-            for player, score in [(game.player1, game.player1_score), (game.player2, game.player2_score)]:
-                ScoreHistory.objects.get_or_create(
-                    user=player,
-                    game=game,
-                    defaults={'score': score, 'is_winner': (player == game.winner)}
-                )
-                try:
-                    profile = player.profile
-                    profile.total_score += score
-                    profile.save()
-                except PlayerProfile.DoesNotExist:
-                    pass
-
+            game.winner = user
         else:
-            # حدس اشتباه: نوبت عوض شود
             if user == game.player1:
                 game.current_turn = game.player2
             else:
@@ -367,6 +316,7 @@ class GuessFullWordAPIView(APIView):
             'game_status': game.status,
             'winner': game.winner.username if game.winner else None,
         }, status=status.HTTP_200_OK)
+
 class LeaderboardAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
@@ -376,3 +326,25 @@ class LeaderboardAPIView(APIView):
         serializer = LeaderboardSerializer(top_ten_users, many=True)
         return Response(serializer.data)
 
+
+
+class GameStatusAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, game_id):
+        game = get_object_or_404(Game, id=game_id)
+
+        user = request.user
+        if user != game.player1 and (game.player2 and user != game.player2):
+            return Response({'error': 'شما در این بازی شرکت ندارید.'},
+                            status=status.HTTP_403_FORBIDDEN)
+        serializer = GameStatusSerializer(game, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+class UserGameHistoryAPIView(ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = ScoreHistorySerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        return ScoreHistory.objects.filter(user=user, game__status='finished')

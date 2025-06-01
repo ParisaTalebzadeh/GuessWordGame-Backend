@@ -1,7 +1,3 @@
-from django.db import models
-
-# Create your models here.
-from django.db import models
 from django.contrib.auth.models import User
 
 from django.db import models
@@ -18,9 +14,9 @@ class PlayerProfile(models.Model):
 
 class Word(models.Model):
     DIFFICULTY_CHOICES = [
-        ('easy', 'Easy'),    # کلمات 4-5 حرفی
-        ('medium', 'Medium'),  # کلمات 6-7 حرفی
-        ('hard', 'Hard'),     # کلمات 8 حرفی یا بیشتر
+        ('easy', 'Easy'),
+        ('medium', 'Medium'),
+        ('hard', 'Hard'),
     ]
 
     text = models.CharField(max_length=100, unique=True)
@@ -32,9 +28,9 @@ class Word(models.Model):
 
 class Game(models.Model):
     DIFFICULTY_CHOICES = [
-        ('easy', 'Easy'),  # 4-5 حرفی، 10 دقیقه
-        ('medium', 'Medium'),  # 6-7 حرفی، 7 دقیقه
-        ('hard', 'Hard'),  # 8+ حرفی، 5 دقیقه
+        ('easy', 'Easy'),
+        ('medium', 'Medium'),
+        ('hard', 'Hard'),
     ]
 
     STATUS_CHOICES = [
@@ -53,17 +49,9 @@ class Game(models.Model):
     difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='waiting')
     created_at = models.DateTimeField(auto_now_add=True)
-
-    # چه کسی الان باید حدس بزنه؟
     current_turn = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='turn_games')
-
-    # برنده بازی بعد از اتمام مشخص می‌شود
     winner = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='won_games')
-
-    # حروفی که حدس زده شده‌اند: مثلاً A,D,E
     guessed_letters = models.TextField(default="")
-
-    # نمایش وضعیت کلمه: مثلاً _ _ A _ E
     masked_word = models.CharField(max_length=100, default="")
     wrong_guesses = models.JSONField(default=dict)
     def __str__(self):
