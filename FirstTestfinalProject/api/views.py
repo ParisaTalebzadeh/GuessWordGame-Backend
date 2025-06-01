@@ -8,42 +8,31 @@ from rest_framework.response import Response
 from rest_framework import status
 
 
-from api.serializers import GameSerializer,  UserProfileSerializer, ScoreHistorySerializer, \
-    LeaderboardSerializer, GameStatusSerializer, GameCreateSerializer
+from api.serializers import GameSerializer, ScoreHistorySerializer, \
+    LeaderboardSerializer, GameStatusSerializer, GameCreateSerializer, UserProfileSerializer
 from main.models import Word, Game, Guess, ScoreHistory, PlayerProfile
 
 
+
+from rest_framework.authtoken.models import Token
 
 class RegisterAPIView(APIView):
     def post(self, request):
         username = request.data.get('username')
         password = request.data.get('password')
-
-        if not username or not password:
-            return Response(
-                {'error': 'Username and password are required!'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if User.objects.filter(username=username).exists():
-            return Response(
-                {'error': 'This username has already been taken!'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
         user = User.objects.create_user(username=username, password=password)
+        token, _ = Token.objects.get_or_create(user=user)
 
-        return Response(
-            {
-                'success': True,
-                'user': {
-                    'id': user.id,
-                    'username': user.username,
-                    'first_name': user.first_name,
-                    'last_name': user.last_name,
-                }
-            }, status=status.HTTP_201_CREATED
-        )
+        return Response({
+            'success': True,
+            'token': token.key,
+            'user': {
+                'id': user.id,
+                'username': user.username,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+            }
+        }, status=status.HTTP_201_CREATED)
 
 class UserProfileAPIView(APIView):
     permission_classes = [IsAuthenticated]

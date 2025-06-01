@@ -6,7 +6,7 @@ from api.views import RegisterAPIView, CreateGameAPIView, JoinGameAPIView, Waiti
     UserGameHistoryAPIView, LeaderboardAPIView, GameStatusAPIView
 
 urlpatterns = [
-    path('login/', obtain_auth_token),
+    path('login/', obtain_auth_token, name='api_token_auth'),
     path('register/', RegisterAPIView.as_view(), name='register'),
     path('profile/', UserProfileAPIView.as_view(), name='user-profile'),
     path('games/<int:game_id>/status/', GameStatusAPIView.as_view(), name='game-status'),
