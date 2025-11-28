@@ -1,14 +1,14 @@
 Guess Word Game-Python Project
 A Django RESTful backend for a two-player Guess Word game.
 Players take turns guessing a single letter of a word (the word is chosen/seeded by an admin). Points are awarded or deducted based on correct/incorrect guesses. The backend exposes a REST API used by the frontend to create games, submit guesses, view game state, and read leaderboard information. Authentication is token-based.
-Table of contents
+***Table of contents***
 
 Project overview
 
 Key features
 
 Tech stack & architecture
-Project overview
+***Project overview***
 
 This service implements the backend logic for a simple turn-based word-guessing game:
 
